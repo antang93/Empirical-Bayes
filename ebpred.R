@@ -153,3 +153,6 @@ ebpred.sim <- function(reps=100, n=70, p=100, beta=rep(1, 5), M=5000) {
 
 }
 
+for (i in c(80, 100, 150, 200, 300, 500, 1000)){
+  ebpred.sim(p=i)
+}
