@@ -116,12 +116,45 @@ get.mode <- function(x) {
 
 }
 
+lassopred <- function(X, y, X.new){
+  o.lars <- lars(X, y, normalize=FALSE, intercept=FALSE, use.Gram=FALSE)
+  cv <- cv.lars(X, y, plot.it=FALSE, se=FALSE, normalize=FALSE, intercept=FALSE, use.Gram=FALSE)
+  b.lasso <- coef(o.lars, s=cv$index[which.min(cv$cv)], mode="fraction")
+  pred <- X.new %*% b.lasso
+  return (pred)
+}
+
+RRpred <- function(X, y, X.new){
+  o.rr <- lm.ridge(y ~ ., df)
+  b.rr <- o.rr$coef
+  pred <- X.new %*% b.rr
+  return (pred)
+}
+
+measure.time.mspe <- function(func, X.new, X, y){
+  for(k in 1:reps)  {
+    X <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
+    X.new <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
+    y <- as.numeric(X[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
+    y.new <- as.numeric(X.new[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
+    time[k] <- system.time(o <- ebpred(y, X, X.new, alpha, gam, NULL, log.f, M))[3] 
+    Y.hat <- apply(o$Yhat, 2, mean)
+    if(reps == 1) hist(Y.hat, freq=FALSE, breaks=25, col="gray", border="white", main="")
+    mspe.l[k] <- mean((y.new - X.new %*% o$b.lasso)**2) #mspe for regular lasso
+    time.l[k] <- system.time(lassopred(X, y, X.new))[3] #time for lasso
+    
+  }
+  return (cbind(mean(mspe), mean(time)))
+}
 
 
 # Example...
 
 dcomplex <- function(x, n, p, a, b) -x * (log(b) + a * log(p)) + log(x <= n)
 
+library('MASS')
+library('monomvn')
+library('pls')
 
 ebpred.sim <- function(reps=100, n=70, p=100, beta=rep(1, 5), M=5000) {
 
@@ -135,24 +168,47 @@ ebpred.sim <- function(reps=100, n=70, p=100, beta=rep(1, 5), M=5000) {
   R <- outer(1:p, 1:p, g)
   e <- eigen(R)
   sqR <- e$vectors %*% diag(sqrt(e$values)) %*% t(e$vectors)
-  time <- mspe <- mspe.l <- numeric(reps)
+  time <- mspe <- mspe.l <- time.l <- numeric(reps)
   for(k in 1:reps)  {
     
     X <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
     X.new <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
     y <- as.numeric(X[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
     y.new <- as.numeric(X.new[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
-    time[k] <- system.time(o <- ebpred(y, X, X.new, alpha, gam, NULL, log.f, M))[3]
+    #df <- cbind(X, y)
+    time[k] <- system.time(o <- ebpred(y, X, X.new, alpha, gam, NULL, log.f, M))[3] 
     Y.hat <- apply(o$Yhat, 2, mean)
     if(reps == 1) hist(Y.hat, freq=FALSE, breaks=25, col="gray", border="white", main="")
-    mspe[k] <- mean((y.new - Y.hat)**2)
-    mspe.l[k] <- mean((y.new - X.new %*% o$b.lasso)**2)
-
+    mspe[k] <- mean((y.new - Y.hat)**2) #mspe for empirical bayes
+    mspe.l[k] <- mean((y.new - X.new %*% o$b.lasso)**2) #mspe for regular lasso
+    time.l[k] <- system.time(lassopred(X, y, X.new))[3] #time for lasso
+    #mspe.rr[k] <- mean((y.new - RRpred(X, y, X.new))**2)
+    #time.rr[k] <- system.time(RRpred(X, y, X.new))[3] #time for RR
+    
   }
-  return(cbind(mspe.lasso=mean(mspe.l), mspe.eb=mean(mspe), time.eb=mean(time)))
-
+  return(cbind(n, p, mspe.lasso=median(mspe.l), mspe.eb=median(mspe), time.eb=mean(time), 
+               time.lasso=mean(time.l), sd.eb=sd(mspe), sd.lasso=sd(mspe.l), PI.eb=quantile(Y.hat, probs=c(.025, .975)), 
+               PI.lasso=quantile(X.new %*% o$b.lasso, probs=c(.025, .975))))
 }
 
-for (i in c(80, 100, 150, 200, 300, 500, 1000)){
-  ebpred.sim(p=i)
+combos <- c(80, 100)
+results <- numeric(length(combos))
+for (i in seq(length(combos))){
+  results[i] <- (ebpred.sim(p=combos[i], reps=1))
+}
+
+for (i in c(80, 100, 150, 200, 300, 500, 1000, 2000)){
+  print(ebpred.sim(p=i))
+}
+
+
+print (ebpred.sim(beta=rep(1.2, 5)))
+print (ebpred.sim(beta=rep(1, 15)))
+
+for (i in c(500)){
+  print(ebpred.sim(p=i))
+}
+
+for (i in c(110, 150, 200, 300, 500, 1000)){
+  print(ebpred.sim(n=110, p=i))
 }
