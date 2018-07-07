@@ -21,7 +21,7 @@ ebpred <- function(y, X, XX, alpha, gam, sig2, log.f, M) {
   SS <- matrix(0, nrow=B + M, ncol=p)
   ss <- numeric(B + M)
   ii <- integer(B + M)
-  YY <- matrix(0, nrow=M, ncol=d)
+  YY <- newname <- matrix(0, nrow=M, ncol=d)
   SS[1,] <- S
   ss[1] <- s <- sum(S)
   ii[1] <- i <- iuS <- nuS <- 1
@@ -57,15 +57,15 @@ ebpred <- function(y, X, XX, alpha, gam, sig2, log.f, M) {
     if(m > B) {
 
       out.mean <- XX[,S > 0] %*% out[[i]]$b.hat
-      YY[m - B,] <- out.mean + sq.v * XX[,S > 0] %*% out[[i]]$U %*% rnorm(s) + sqrt(sig2) * rnorm(d)
-
+      newname[m - B,] <- XX[,S > 0] %*% out[[i]]$b.hat
+      #YY[m - B,] <- out.mean + sq.v * XX[,S > 0] %*% out[[i]]$U %*% rnorm(s) + sqrt(sig2) * rnorm(d)
+#^noise can be taken out if we're only looking at mean
     }
 
   }
-  return(list(Yhat=YY, b.lasso=b.lasso))
+  return(list(b.lasso=b.lasso, Yhat = newname))
 
 }
-
 
 rprop <- function(S, n) {
 
@@ -84,11 +84,24 @@ rprop <- function(S, n) {
 
 
 compare.to.rows <- function(SS, S) {
+  if (ncol(SS)==1){
+    SS <- t(SS)
+  }
+  numrows <- nrow(SS)
+  newS <- matrix(rep(S,numrows), nrow=numrows, byrow=TRUE)
+  subtracted <- abs(newS-SS)
+  o <- rowSums(subtracted)
+  if(all(o > 0)) return(0) else return(which(o == 0)[1])
+}
 
+
+compare.to.rows0 <- function(SS, S) {
+  #since this is vector of 0, 1s, 
+  #is it better to convert to the number that's represented by the binary numbers?
+  #as.binary(S)
   h <- function(v) sum(abs(v - S))
   o <- apply(SS, 1, h)
   if(all(o > 0)) return(0) else return(which(o == 0)[1])
-
 }
 
 
@@ -96,13 +109,13 @@ get.lm.stuff <- function(S, y, X) {
 
   if(!exists("ginv")) library(MASS)
   X.S <- as.matrix(X[, S > 0])
-  o <- lm(y ~ X.S - 1)
+  o <- lm.fit(X.S, y, singular.ok = FALSE)
   sse <- sum(o$residuals**2)
   b.hat <- o$coefficients
-  XtX.S <- t(X.S) %*% X.S
-  V <- ginv(XtX.S)
-  U <- chol(V)
-  return(list(sse=sse, b.hat=b.hat, U=U))
+  #XtX.S <- t(X.S) %*% X.S
+  #V <- ginv(XtX.S)
+  #U <- chol(V)
+  return(list(sse=sse, b.hat=b.hat))
 
 }
 
@@ -116,7 +129,7 @@ get.mode <- function(x) {
 
 }
 
-lassopred <- function(X, y, X.new){
+lassopred <- function(X, y, X.new){ ##lasso
   o.lars <- lars(X, y, normalize=FALSE, intercept=FALSE, use.Gram=FALSE)
   cv <- cv.lars(X, y, plot.it=FALSE, se=FALSE, normalize=FALSE, intercept=FALSE, use.Gram=FALSE)
   b.lasso <- coef(o.lars, s=cv$index[which.min(cv$cv)], mode="fraction")
@@ -124,29 +137,54 @@ lassopred <- function(X, y, X.new){
   return (pred)
 }
 
-RRpred <- function(X, y, X.new){
+RRpred <- function(X, y, X.new){ ##ridge regression
   o.rr <- lm.ridge(y ~ X)
   b.rr <- o.rr$coef
   pred <- X.new %*% b.rr
   return (pred)
 }
 
-measure.time.mspe <- function(func, X.new, X, y){
-  for(k in 1:reps)  {
-    X <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
-    X.new <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
-    y <- as.numeric(X[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
-    y.new <- as.numeric(X.new[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
-    time[k] <- system.time(o <- ebpred(y, X, X.new, alpha, gam, NULL, log.f, M))[3] 
-    Y.hat <- apply(o$Yhat, 2, mean)
-    if(reps == 1) hist(Y.hat, freq=FALSE, breaks=25, col="gray", border="white", main="")
-    mspe.l[k] <- mean((y.new - X.new %*% o$b.lasso)**2) #mspe for regular lasso
-    time.l[k] <- system.time(lassopred(X, y, X.new))[3] #time for lasso
-    
-  }
-  return (cbind(mean(mspe), mean(time)))
+PLSRpred <- function(X, y, X.new, p){ ##partial least squares regression
+  o.plsr <- plsr(y ~ X, method = pls.options()$plsralg)
+  b.plsr <- o.plsr$coefficients[1:p]
+  pred <- X.new %*% b.plsr
+  return (pred)
 }
 
+BLpred <- function(X, y, X.new){ ##bayesian lasso
+  o.bl <- blasso(X, y, normalize=FALSE, icept=FALSE, verb = 0)
+  b.bl <- o.bl$beta
+  pred <- X.new %*% colMeans(b.bl) 
+  return (pred)
+}
+
+HSpred <- function(X, y, X.new){ ##horseshoe
+  #tau.estimate <- HS.MMLE(y, 1)
+  o.hs <- horseshoe(y, X, method.tau = "halfCauchy", method.sigma = "fixed", Sigma2 = 1)
+  b.hs <- o.hs$BetaHat
+  pred <- X.new %*% b.hs
+  return (pred)
+}
+
+alasso.pred <- function(X, y, X.new){ ##adaptive lasso
+  o.alasso <- adalasso(X, y, use.Gram = FALSE, intercept=FALSE)
+  b.alasso <- o.alasso$coefficients.adalasso
+  pred <- X.new %*% b.alasso
+}
+
+BRpred <- function(X, y, X.new){ ##bayesian ridge
+  o.br <- bridge(X, y, normalize=FALSE, icept=FALSE, verb = 0)
+  b.br <- o.br$beta
+  pred <- X.new %*% colMeans(b.br)
+  return (pred)
+}
+
+PCRpred <- function(X, y, X.new, p){ ##principal components regression
+  o.pcr <- pcr(y ~ X, method = pls.options()$pcralg)
+  b.pcr <- o.pcr$coefficients[1:p]
+  pred <- X.new %*% b.pcr
+  return (pred)
+}
 
 # Example...
 
@@ -155,20 +193,23 @@ dcomplex <- function(x, n, p, a, b) -x * (log(b) + a * log(p)) + log(x <= n)
 library('MASS')
 library('monomvn')
 library('pls')
+library('horseshoe')
+library('parcor')
 
-ebpred.sim <- function(reps=100, n=70, p=100, beta=rep(1, 5), M=5000) {
+ebpred.sim <- function(reps=100, n=70, p=100, beta=rep(1, 5), r=0.5, M=5000) {
 
   sig2 <- 1
   alpha <- 0.999
   gam <- 1 - alpha
   log.f <- function(x) dcomplex(x, n, p, 0.05, 1)
   s0 <- length(beta)
-  r <- 0.5
   g <- function(i, j) r**(abs(i - j))
   R <- outer(1:p, 1:p, g)
   e <- eigen(R)
   sqR <- e$vectors %*% diag(sqrt(e$values)) %*% t(e$vectors)
-  time <- mspe <- mspe.l <- time.l <- mspe.rr <- time.rr <- numeric(reps)
+  time <- mspe <- mspe.l <- time.l <- mspe.rr <- time.rr <- mspe.hs <- time.hs <- 
+    mspe.alasso <- time.alasso <- mspe.plsr <- time.plsr <- mspe.bl <- time.bl <- 
+    mspe.br <- time.br <- mspe.pcr <- time.pcr <- numeric(reps)
   for(k in 1:reps)  {
     
     X <- matrix(rnorm(n * p), nrow=n, ncol=p) %*% sqR
@@ -176,40 +217,36 @@ ebpred.sim <- function(reps=100, n=70, p=100, beta=rep(1, 5), M=5000) {
     y <- as.numeric(X[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
     y.new <- as.numeric(X.new[, 1:s0] %*% beta) + sqrt(sig2) * rnorm(n)
     time[k] <- system.time(o <- ebpred(y, X, X.new, alpha, gam, NULL, log.f, M))[3] 
-    Y.hat <- apply(o$Yhat, 2, mean)
+    Y.hat <- colMeans(o$Yhat)
     if(reps == 1) hist(Y.hat, freq=FALSE, breaks=25, col="gray", border="white", main="")
     mspe[k] <- mean((y.new - Y.hat)**2) #mspe for empirical bayes
     mspe.l[k] <- mean((y.new - X.new %*% o$b.lasso)**2) #mspe for regular lasso
     time.l[k] <- system.time(lassopred(X, y, X.new))[3] #time for lasso
     mspe.rr[k] <- mean((y.new - RRpred(X, y, X.new))**2) #mspe for ridge regression
     time.rr[k] <- system.time(RRpred(X, y, X.new))[3] #time for ridge regression
-    #time.rr[k] <- system.time(RRpred(X, y, X.new))[3] #time for RR
-    
+    sink('/dev/null')
+    mspe.hs[k] <- mean((y.new - HSpred(X, y, X.new))**2) #mspe for hs
+    time.hs[k] <- system.time(HSpred(X, y, X.new))[3] #time for hs
+    sink()
+    mspe.alasso[k] <- mean((y.new - alasso.pred(X, y, X.new))**2) #mspe for adaptive lasso
+    time.alasso[k] <- system.time(alasso.pred(X, y, X.new))[3] #time for adaptive lasso
+    mspe.plsr[k] <- mean((y.new - PLSRpred(X, y, X.new, p))**2) #mspe for plsr
+    time.plsr[k] <- system.time(PLSRpred(X, y, X.new, p))[3] #time for plsr
+    #mspe.bl[k] <- mean((y.new - BLpred(X, y, X.new))**2) #mspe for bl
+    #time.bl[k] <- system.time(BLpred(X, y, X.new))[3] #time for bl
+    #mspe.br[k] <- mean((y.new - BRpred(X, y, X.new))**2) #mspe for br
+    #time.br[k] <- system.time(BRpred(X, y, X.new))[3] #time for br
+    mspe.pcr[k] <- mean((y.new - PCRpred(X, y, X.new, p))**2) #mspe for pcr
+    time.pcr[k] <- system.time(PCRpred(X, y, X.new, p))[3] #time for pcr
+    print (k)
   }
-  return(cbind(n, p, mspe.eb=median(mspe), mspe.lasso=median(mspe.l), 
-               mspe.rr=median(mspe.rr), time.eb=mean(time), time.lasso=mean(time.l), 
-               time.rr=mean(time.rr), sd.eb=sd(mspe), sd.lasso=sd(mspe.l), 
-               PI.eb=quantile(Y.hat, probs=c(.025, .975)), 
+  return(cbind(n, p, mspe.eb=mean(mspe, trim=.1), mspe.lasso=mean(mspe.l, trim=.1), 
+               mspe.rr=mean(mspe.rr, trim=.1), mspe.hs=mean(mspe.hs, trim=.1),
+               mspe.alasso=mean(mspe.alasso, trim=.1), mspe.plsr=mean(mspe.plsr, trim=.1), 
+               mspe.pcr=mean(mspe.pcr, trim=.1), time.eb=mean(time), 
+               time.lasso=mean(time.l), time.rr=mean(time.rr), time.hs=mean(time.hs), 
+               time.alasso=mean(time.alasso), time.plsr=mean(time.plsr), 
+               time.pcr=mean(time.pcr), 
+               sd.eb=sd(mspe), sd.lasso=sd(mspe.l), PI.eb=quantile(Y.hat, probs=c(.025, .975)), 
                PI.lasso=quantile(X.new %*% o$b.lasso, probs=c(.025, .975))))
-}
-
-combos <- c(80, 100)
-results <- numeric(length(combos))
-for (i in seq(length(combos))){
-  results[i] <- (ebpred.sim(p=combos[i], reps=1))
-}
-
-for (i in c(80, 100, 150, 200, 300, 500, 1000, 2000)){
-  print(ebpred.sim(p=i))
-}
-
-print (ebpred.sim(beta=rep(1.2, 5)))
-print (ebpred.sim(beta=rep(1, 15)))
-
-for (i in c(550, 600, 700, 800, 1000)){
-  print(ebpred.sim(p=i, n=500))
-}
-
-for (i in c(150, 200, 300, 500, 1000)){
-  print(ebpred.sim(n=110, p=i))
 }

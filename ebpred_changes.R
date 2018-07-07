@@ -84,11 +84,11 @@ get.lm.stuff <- function(S, y, X) {
   
   if(!exists("ginv")) library(MASS)
   X.S <- as.matrix(X[, S > 0])
-  o <- lm.fit(X.S, y)
+  o <- lm.fit(X.S, y, singular.ok = FALSE)
   sse <- sum(o$residuals**2)
   b.hat <- o$coefficients
-  XtX.S <- t(X.S) %*% X.S
-  V <- ginv(XtX.S)
+  XtX.S <- t(X.S) %*% X.S ## See if this can be called from lm.fit or lm
+  V <- ginv(XtX.S) ## see if this can be called from lm.fit or lm
   U <- chol(V)
   return(list(sse=sse, b.hat=b.hat, U=U))
 }
@@ -112,7 +112,7 @@ lassopred <- function(X, y, X.new){
 }
 
 RRpred <- function(X, y, X.new){
-  o.rr <- lm.ridge(y ~ ., df)
+  o.rr <- lm.ridge(y ~ X)
   b.rr <- o.rr$coef
   pred <- X.new %*% b.rr
   return (pred)
@@ -207,15 +207,22 @@ runsim <- function(combos, testrun=TRUE){
     results <- numeric(length(combos))
     for (i in length(combos)){
       results[i] <- rep <- ebpred.sim(p=combos[i])
-      #print(rep)
     }
   }
   else {
-    results <- ebpred.sim(reps=2) 
-    #print(results)
+    results <- ebpred.sim(p=1000) 
   }
   return(results)
 }
+
+res1000 <- runsim(combos = c(), testrun=T)
+
+for (i in 1:100){
+  if(res1000$deets[[i]]$mspe_eb>4){
+    print(i)
+  }
+}
+res$deets[[41]]$mspe_eb
 
 print (ebpred.sim(beta=rep(1.2, 5)))
 print (ebpred.sim(beta=rep(1, 15)))
@@ -227,3 +234,5 @@ for (i in c(550, 600, 700, 800, 1000)){
 for (i in c(250, 300, 400, 500)){
   print(ebpred.sim(n=200, p=i))
 }
+
+#profiling use profvis
